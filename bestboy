@@ -1,0 +1,130 @@
+#!/bin/bash
+
+DIR="$( cd "$( dirname "$(readlink -f ${BASH_SOURCE[0]})" )" && pwd )"
+PFILE=$DIR/$(basename $0).pid
+[ -f $PFILE ] && PID=$(<$PFILE)
+SDELAY=5
+DOWNDELAY=5
+MAXTRY=10
+printf -v DST %04x $$
+# printf -v DST "%s/fl-%(%Y-%b-%d_%H-%M-%S)T-%s.mp4" "$DIR" -1 ${2:-$DST}
+DST=$(date +"$DIR/fl-%Y-%b-%d_%H-%M-%S-${2:-$DST}.mp4")
+
+
+GRABBER_DEVICE=/dev/video1
+WEBCAM_DEVICE=/dev/video0
+LOGO_PATH=/home/briner/fl-grabber/image/fl_video_thumb.png
+
+die() { echo "$(basename $0) Error: $@" >&2;exit 1; }
+usage() { cat <<-eousage
+  Usage: $0 [start [filename]|stop|status|watch|playLast]
+	eousage
+}
+txtsize() {
+    local _c=$1 _i=0 _a=(b K M G T P)
+    while [ ${#_c} -gt 3 ] ;do
+        ((_i++))
+        _c=$((_c>>10))
+      done
+    _c=000$(( ( $1*1000 ) >> ( 10*_i ) ))
+    ((_i+=${3:-0}))
+    printf ${2+-v} $2 "%.2f%s\n" ${_c:0:${#_c}-3}.${_c:${#_c}-3} ${_a[_i]}
+}
+start() {
+    [ "$PID" ] && [ -z "${PID//[0-9]}" ] && [ -d /proc/$PID ] && \
+	die "GST est déjà en cours d'enregistrement."
+    PID=
+    while [ -z "$PID" ] && [ $((MAXTRY--)) -gt 0 ];do
+	date +"newrun %c" | tee -a $DIR/gst.log >>$DIR/gst.err
+	runGst >>$DIR/gst.log 2>>$DIR/gst.err </dev/null &
+	provpid=$!
+	read provpid < <(ps ho ppid,pid|sed -ne "s/^ *$provpid //p")
+	sleep $SDELAY;
+	if [ -s "$DST" ] ;then
+	    PID=$provpid
+	    echo $PID >$PFILE
+	else
+	    killtry=10
+	    while [ -d /proc/$provpid ] && [ $((killtry--)) -gt 0 ];do
+		kill -INT $provpid
+		sleep 2
+	    done
+	fi
+    done
+    [ -z "$PID" ] && die "Démarrage impossible... Vérifiez la résolution de l'écran (800x600)."
+}
+
+stop() {
+    [ "$PID" ] && [ -z "${PID//[0-9]}" ] && [ -d /proc/$PID ] && \
+    while [ -d /proc/$PID ] ;do
+	kill -INT $PID
+	sleep $DOWNDELAY
+	done 
+    [ -f $PFILE ] && rm $PFILE
+}
+status() {
+    if [ "$PID" ] && [ -z "${PID//[0-9]}" ] &&
+	[ -d /proc/$PID ] ;then
+	# ps h $PID
+	read STARTED < <(LANG=C ps ho lstart $PID|date -f - +%s)
+	for fd in /proc/$PID/fd/*;do
+	    read file < <(readlink $fd)
+	    [ -z "${file//$DIR\/fl-*.mp4}" ] && read SIZE < <(stat -c %s $file)
+	done
+	txtsize $SIZE HSIZE
+	date +"Enregistrement démarré à %T, taille actuelle: $HSIZE" -d "1970-1-1 +$STARTED seconds"
+    else
+	echo "Pas d'enregistrement en cours"
+    fi
+}
+showLast() {
+   if [ "$PID" ] && [ -z "${PID//[0-9]}" ] && [ -d /proc/$PID ] ;then
+       read -n1 -p "Enregistrement en cours, affichage de l'enregistrement précédent."
+       vlc $(/bin/ls -1t $DIR/fl-*mp4 | sed -ne 2p)
+   else
+       vlc $(/bin/ls -1t $DIR/fl-*mp4 | head -n1)
+   fi
+}
+
+runGst() {
+gst-launch-0.10 -e videomixer2 name=mix \
+                               sink_0::xpos=0   sink_0::ypos=0   sink_0::zorder=2 \
+                               sink_1::xpos=320 sink_1::ypos=0   sink_1::zorder=1 \
+                               sink_2::xpos=0  sink_2::ypos=240 sink_2::zorder=0 \
+   ! ffmpegcolorspace \
+   ! "video/x-raw-yuv, format=(fourcc)I420, framerate=(fraction)30/1" \
+   ! x264enc \
+   ! mux. \
+   v4l2src device=${WEBCAM_DEVICE} \
+     ! ffmpegcolorspace \
+     ! "video/x-raw-yuv, width=(int)320, height=(int)240,format=(fourcc)I420, framerate=(fraction)30/1" \
+     ! mix.sink_0 \
+   v4l2src device=${GRABBER_DEVICE} \
+     ! ffmpegcolorspace \
+     ! "video/x-raw-yuv, width=(int)800, height=(int)600, format=(fourcc)I420, framerate=(fraction)30/1" \
+     ! mix.sink_1 \
+   uridecodebin uri=file://${LOGO_PATH} \
+     ! videoscale \
+     ! ffmpegcolorspace \
+     ! imagefreeze \
+     ! "video/x-raw-yuv, width=320, height=360, format=(fourcc)I420, framerate=(fraction)30/1" \
+     ! mix.sink_2 \
+   pulsesrc ! audioconvert \
+      ! audio/x-raw-int, rate=44100, channels=2 \
+      ! faac tns=true \
+      ! queue \
+      ! mp4mux name=mux \
+   mux. ! filesink location="$DST"
+}
+
+COMMAND=${1:-status}
+
+case "${COMMAND,,}" in
+    status ) status ;;
+    start )  start  ;;
+    stop )   stop   ;;
+    playlast )   showLast ;;
+    watch )  watch $0 ;;
+    -h|help ) usage ; exit 0 ;;
+    * )     usage; die Syntax error. ;;
+esac
