@@ -30,14 +30,3 @@ gst-launch-1.0 -e \
         ! queue \
         ! mp4mux name=mux \
     mux. ! filesink location="${DST}"
-
-
-       
-        
-        
-        
-        
-
-    multifilesrc location="${LOGO_PATH}" caps="image/png, width=(int)320, height=(int)528, ${DEFAULT_CAPS}" \
-        ! decodebin \
-        ! mix.sink_2
