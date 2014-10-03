@@ -1,0 +1,18 @@
+gst-launch-1.0 -e \
+    videomixer name=mix \
+        sink_0::xpos=0   sink_0::ypos=0   sink_0::zorder=2 \
+        sink_1::xpos=320 sink_1::ypos=0   sink_1::zorder=1 \
+        sink_2::xpos=0  sink_2::ypos=240 sink_2::zorder=0 \
+    ! "video/x-raw, width=(int)1344, height=(int)768, format=(string)I420, framerate=(fraction)30/1" \
+    ! xvimagesink sync=false \
+    videotestsrc \
+        ! "video/x-raw, width=(int)320, height=(int)240, format=(string)I420, framerate=(fraction)30/1" \
+        ! mix.sink_0 \
+     videotestsrc \
+        ! "video/x-raw, width=(int)1024, height=(int)768, format=(string)YUY2, framerate=(fraction)30/1" \
+        ! videoconvert \
+        ! "video/x-raw, width=(int)1024, height=(int)768, format=(string)I420, framerate=(fraction)30/1" \
+        ! mix.sink_1
+    multifilesrc location="http://github.com/briner/bestboy/tree/master/doc/ML/logo.png" caps="image/png, width=(int)320, height=(int)528, ${DEFAULT_CAPS}" \
+        ! decodebin \
+        ! mix.sink_2
