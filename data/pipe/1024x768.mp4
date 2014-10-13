@@ -1,12 +1,13 @@
 rm test.mp4
 
-GRABBER_DEVICE=/dev/video1
-WEBCAM_DEVICE=/dev/video0
+GRABBER_DEVICE=/dev/video0
+WEBCAM_DEVICE=/dev/video1
 LOGO_PATH=/home/briner/test.png
 DST=/home/briner/test.mp4
 
 DEFAULT_CAPS="format=(string)YUY2, framerate=(fraction)30/1"
 
+rm $DEST
 gst-launch-1.0 -e \
     videomixer name=mix \
         sink_0::xpos=0   sink_0::ypos=0   sink_0::zorder=2 \
