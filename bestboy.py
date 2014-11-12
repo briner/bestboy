@@ -77,30 +77,32 @@ class Player(object):
         
         #
         # Add elements to the pipeline
-        #self.pipeline.add(self.webcam)
-        #self.pipeline.add(self.webcam_filter)
-        #self.pipeline.add(self.webcam_encoder)
+        self.pipeline.add(self.webcam)
+        self.pipeline.add(self.webcam_filter)
+        self.pipeline.add(self.webcam_encoder)
+        self.pipeline.add(self.container)
+        #
+        #self.pipeline.add(self.grabber)
+        #self.pipeline.add(self.grabber_filter_1)
+        #self.pipeline.add(self.convert)
+        #self.pipeline.add(self.grabber_filter_2)
+        #self.pipeline.add(self.grabber_encoder)
         #self.pipeline.add(self.container)
         #
-        self.pipeline.add(self.grabber)
-        self.pipeline.add(self.grabber_filter_1)
-        self.pipeline.add(self.convert)
-        self.pipeline.add(self.grabber_filter_2)
-        self.pipeline.add(self.grabber_encoder)
-        self.pipeline.add(self.container)
         self.pipeline.add(self.filesink)
 #        self.pipeline.add(self.webcam_screen)
         
         # link them
-        #self.webcam.link(self.webcam_filter)
-        #self.webcam_filter.link(self.webcam_encoder)
-        #self.webcam_encoder.link(self.container)
-        #self.container.link(self.filesink)
-        self.grabber.link(self.grabber_filter_1)
-        self.grabber_filter_1.link(self.grabber_convert)
-        self.grabber_convert.link(self.grabber_filter2)
-        self.grabber_filter2.link(self.grabber_encoder)
-        self.grabber_encoder.link(self.container)
+        self.webcam.link(self.webcam_filter)
+        self.webcam_filter.link(self.webcam_encoder)
+        self.webcam_encoder.link(self.container)
+        #
+        #self.grabber.link(self.grabber_filter_1)
+        #self.grabber_filter_1.link(self.grabber_convert)
+        #self.grabber_convert.link(self.grabber_filter2)
+        #self.grabber_filter2.link(self.grabber_encoder)
+        #self.grabber_encoder.link(self.container)
+        #
         self.container.link(self.filesink)        
 
 
