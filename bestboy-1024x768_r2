@@ -1,0 +1,269 @@
+#!/bin/bash
+
+# version is needed for how we will post-process the file generated_
+version="0.1"
+
+#nbestboy
+
+
+ACTION=None
+COURSENAME="CHECK"
+DIR="$( cd "$( dirname "$(readlink -f ${BASH_SOURCE[0]})" )" && pwd )"
+PFILE=$DIR/$(basename $0).pid
+[ -f $PFILE ] && PID=$(<$PFILE)
+SDELAY=5
+DOWNDELAY=5
+MAXTRY=10
+printf -v DST %04x $$
+DST=$(date +"${DIR}/date:%y.%m.%d_%H:%M:%S_-_name:${2:-$COURSENAME}_-_version:${version}.mp4")
+
+
+GRABBER_DEVICE=$(v4l2-ctl --list-devices \
+                | grep -A1 "VisionRGB-E1S" \
+                | tail -1 \
+                | sed -r "s|\s*||")
+WEBCAM_DEVICE=$(v4l2-ctl --list-devices \
+                | grep -A1 "HD Pro Webcam C920" \
+                | tail -1 \
+                | sed -r "s|\s*||")
+LOGO_PATH=/home/briner/bestboy/material/img/gull_800x600.png
+
+die() { echo "$(basename $0) Error: $@" >&2;exit 1; }
+usage() { cat <<-eousage
+    Usage: $0
+        start <coursename>
+        checkstart : used to check the station record
+        stop
+        status
+        playlast
+        show [grabber|cam]: commodity to see webcam or grabber
+eousage
+}
+
+function filter_list_video
+{
+    grep -P "date:.*_-_name:.*_-_version:.*"
+}
+function find_video
+{
+    find -type f -printf '%T@ %p\0' \
+    | sort -zk 1nr \
+    | sed -z 's/^[^ ]* //' \
+    | tr '\0' '\n'  \
+    | filter_list_video
+}
+function get_filename_video_recording
+{   
+    PID="$1"
+    for fd in /proc/$PID/fd/*
+    do
+        filepath=$(readlink $fd)
+        echo "${filepath}" | filter_list_video
+    done
+}
+txtsize() {
+    local _c=$1 _i=0 _a=(b K M G T P)
+    while [ ${#_c} -gt 3 ] ;do
+        ((_i++))
+        _c=$((_c>>10))
+      done
+    _c=000$(( ( $1*1000 ) >> ( 10*_i ) ))
+    ((_i+=${3:-0}))
+    printf ${2+-v} $2 "%.2f%s\n" ${_c:0:${#_c}-3}.${_c:${#_c}-3} ${_a[_i]}
+}
+function start_test
+{
+    if lsmod | grep -qP  "^rgb133\b"
+    then
+        echo -e "\033[0;34m(INFO : module rgb133.ko loaded)\033[0m"
+        echo -e "\033[0;34m(INFO : if the recording does not start, check the 1024x768 resolution\033[0m"
+        echo -e "\033[0;34m(Hint : use /usr/local/Vision/Vision)\033[0m"
+        echo -e "\033[0;34m(INFO : if the start still does not start check these:\033[0m"
+        echo -e "\033[0;34m(Hint :   webcam is not already running (cheese, vlc, ...)\033[0m"
+        echo -e "\033[0;34m(Hint :   graber is not already running (Vision, vlc, ...)\033[0m"
+    else
+        echo -e "\033[0;31mERROR : You must reboot and use the oldest kernel\033[0m"
+        echo -e '\033[0;31mERROR : to have the rgb133.ko module in it. (lsmod | grep -P "^rgb133\\b")\033[0m'
+        echo -e "\033[0;34mHint: you can choose the kernel at grub time.\033[0m"
+        exit
+    fi
+}
+
+start() {
+    start_test
+    [ "$PID" ] && [ -z "${PID//[0-9]}" ] && [ -d /proc/$PID ] && \
+	die "GST est déjà en cours d'enregistrement."
+    PID=
+    while [ -z "$PID" ] && [ $((MAXTRY--)) -gt 0 ];do
+    echo "" | tee -a $DIR/gst.log >>$DIR/gst.err
+	date +"newrun %c" | tee -a $DIR/gst.log >>$DIR/gst.err
+	runGst >>$DIR/gst.log 2>>$DIR/gst.err </dev/null &
+	provpid=$!
+	read provpid < <(ps ho ppid,pid|sed -ne "s/^ *$provpid //p")
+	sleep $SDELAY;
+	if [ -s "$DST" ] ;then
+	    PID=$provpid
+	    echo $PID >$PFILE
+	else
+	    killtry=10
+	    while [ -d /proc/$provpid ] && [ $((killtry--)) -gt 0 ];do
+		kill -INT $provpid
+		sleep 2
+	    done
+	fi
+    done
+    [ -z "$PID" ] && die "Démarrage impossible... Vérifiez la résolution de l'écran (800x600)."
+}
+
+stop() {
+    FILEPATH=$(get_filename_video_recording $PID)
+    [ "$PID" ] && [ -z "${PID//[0-9]}" ] && [ -d /proc/$PID ] && \
+    while [ -d /proc/$PID ] ;do
+	kill -INT $PID
+	sleep $DOWNDELAY
+	done 
+    [ -f $PFILE ] && rm $PFILE
+    #
+    if echo "$FILEPATH" | grep -q "_-_name:CHECK_-_"
+    then
+        FINAL_OR_CHECK="check-video"
+    else
+        FINAL_OR_CHECK="final-video"
+    fi
+    LASTDIR="$(dirname ${FILEPATH})/${FINAL_OR_CHECK}"
+    if test ! -d "${LASTDIR}"
+    then
+        mkdir ${LASTDIR}
+    fi
+    NFILEPATH="$(dirname ${FILEPATH})/${FINAL_OR_CHECK}/$(basename ${FILEPATH})"
+    mv ${FILEPATH} ${NFILEPATH}
+    echo -e "\033[0;34mmovie file generated: ${NFILEPATH}\033[0m"
+}
+
+status() {
+    if [ "$PID" ] && [ -z "${PID//[0-9]}" ] && [ -d /proc/$PID ] ;then
+        # ps h $PID
+        read STARTED < <(LANG=C ps ho lstart $PID|date -f - +%s)        
+        filepath=$(get_filename_video_recording $PID)
+        if test -n "${filepath}" ; then
+            SIZE=$(stat -c %s $filepath)
+        fi
+        txtsize $SIZE HSIZE
+        echo "filepath: $filepath"
+        date +"Enregistrement démarré à %T, taille actuelle: $HSIZE" -d "1970-1-1 +$STARTED seconds"
+    else
+        echo "Pas d'enregistrement en cours"
+    fi
+}
+playlast() {
+    if [ "$PID" ] && [ -z "${PID//[0-9]}" ] && [ -d /proc/$PID ] ;then
+        read -n1 -p "Enregistrement en cours, affichage de l'enregistrement précédent."
+        FILEPATH=$(find_video | sed -ne 2p)
+    else
+        FILEPATH=$(find_video | head -n1)
+    fi
+    if test -z "$FILEPATH"; then
+        echo -e "unable to find a video to play"
+    else
+        echo "play : ${FILEPATH}"
+        vlc "${FILEPATH}"
+    fi
+}
+
+function runGst
+{
+    gst-launch-1.0 -e videomixer name=mix \
+                             sink_0::xpos=0   sink_0::ypos=0   sink_0::zorder=2 \
+                             sink_1::xpos=320 sink_1::ypos=0   sink_1::zorder=1 \
+   ! x264enc \
+   ! queue \
+   ! mux. \
+   uvch264src device=${WEBCAM_DEVICE} \
+     ! "video/x-raw, width=(int)320, height=(int)240,format=(string)YUY2, framerate=(fraction)30/1" \
+     ! mix.sink_0 \
+   v4l2src device=${GRABBER_DEVICE} \
+     ! "video/x-raw, width=(int)1024, height=(int)768,format=(string)YUY2, framerate=(fraction)30/1" \
+     ! mix.sink_1 \
+   pulsesrc ! audioconvert \
+      ! audio/x-raw, rate=44100, channels=2 \
+      ! lamemp3enc \
+      ! queue \
+      ! mp4mux name=mux \
+   mux. ! filesink location="$DST"
+}
+
+
+
+
+runGst_0.10() {
+gst-launch-0.10 -e videomixer2 name=mix \
+                               sink_0::xpos=0   sink_0::ypos=0   sink_0::zorder=2 \
+                               sink_1::xpos=320 sink_1::ypos=0   sink_1::zorder=1 \
+                               sink_2::xpos=0  sink_2::ypos=240 sink_2::zorder=0 \
+   ! ffmpegcolorspace \
+   ! "video/x-raw-yuv, format=(fourcc)I420, framerate=(fraction)30/1" \
+   ! x264enc \
+   ! mux. \
+   v4l2src device=${WEBCAM_DEVICE} \
+     ! ffmpegcolorspace \
+     ! "video/x-raw-yuv, width=(int)320, height=(int)240,format=(fourcc)I420, framerate=(fraction)30/1" \
+     ! mix.sink_0 \
+   v4l2src device=${GRABBER_DEVICE} \
+     ! ffmpegcolorspace \
+     ! "video/x-raw-yuv, width=(int)800, height=(int)600, format=(fourcc)I420, framerate=(fraction)30/1" \
+     ! mix.sink_1 \
+   uridecodebin uri=file://${LOGO_PATH} \
+     ! videoscale \
+     ! ffmpegcolorspace \
+     ! imagefreeze \
+     ! "video/x-raw-yuv, width=320, height=360, format=(fourcc)I420, framerate=(fraction)30/1" \
+     ! mix.sink_2 \
+   pulsesrc ! audioconvert \
+      ! audio/x-raw-int, rate=44100, channels=2 \
+      ! faac tns=true \
+      ! queue \
+      ! mp4mux name=mux \
+   mux. ! filesink location="$DST"
+}
+
+COMMAND=${1:-status}
+
+case "${COMMAND,,}" in
+    status )
+        ACTION="status"
+        status ;;
+    checkstart )
+        ACTION="checkstart"
+        start
+        ;;
+    start )
+        ACTION="start"
+        if test -z $2;
+        then
+            usage
+            die Syntax error.
+        fi
+        start $2
+        ;;
+    stop )
+        ACTION="stop"
+        stop
+        ;;
+    playlast )
+        ACTION="playlast"
+        playlast
+        ;;
+    show )
+        if test "$2" = "cam"; then
+            cheese ${WEBCAM_DEVICE}
+        elif test "$2" = "grabber"; then
+            /usr/local/Vision/Vision
+        else
+            usage
+            die Syntax error.
+        fi
+        
+        ;;
+    -h|help ) usage ; exit 0 ;;
+    * )     usage; die Syntax error. ;;
+esac
