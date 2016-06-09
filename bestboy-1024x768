@@ -5,18 +5,16 @@ version="0.1"
 
 #nbestboy
 
-
+DEBUG=false
 ACTION=None
 COURSENAME="CHECK"
+LOGO_PATH=/home/briner/bestboy/material/img/gull_800x600.png
 DIR="$( cd "$( dirname "$(readlink -f ${BASH_SOURCE[0]})" )" && pwd )"
 PFILE=$DIR/$(basename $0).pid
 [ -f $PFILE ] && PID=$(<$PFILE)
 SDELAY=5
 DOWNDELAY=5
 MAXTRY=10
-printf -v DST %04x $$
-DST=$(date +"${DIR}/date:%y.%m.%d_%H:%M:%S_-_name:${2:-$COURSENAME}_-_version:${version}.mp4")
-
 
 GRABBER_DEVICE=$(v4l2-ctl --list-devices \
                 | grep -A1 "VisionRGB-E1S" \
@@ -26,17 +24,40 @@ WEBCAM_DEVICE=$(v4l2-ctl --list-devices \
                 | grep -A1 "HD Pro Webcam C920" \
                 | tail -1 \
                 | sed -r "s|\s*||")
-LOGO_PATH=/home/briner/bestboy/material/img/gull_800x600.png
 
-die() { echo "$(basename $0) Error: $@" >&2;exit 1; }
+if [[ -z ${WEBCAM_DEVICE} ]]; then
+    echo "No webcam device found."
+    echo "Exit !"
+    exit 1
+fi
+
+if [[ -z ${GRABBER_DEVICE} ]]; then
+    echo "No grabber device found."
+    echo "Exit !"
+    exit 1
+fi
+
+
+die() { echo "$(basename $0) Error: $@" >&2;$DEBUG && set >&2;exit 1; }
 usage() { cat <<-eousage
-    Usage: $0
-        start <coursename>
-        checkstart : used to check the station record
-        stop
-        status
-        playlast
-        show [grabber|cam]: commodity to see webcam or grabber
+    Usage: $0 
+      [-s] [-d] [-h] [ checkstart [<coursename>] |
+                       start                    |
+                       status                   |
+                       stop                     |
+                       playlast                 |
+                       show      [grabber|cam]  ] 
+      -h   Show this help
+      -d   Debug (show running command and dump environ when exit)
+      -s   Small name (shorten auto file name)
+      
+      checkstart: allow to test the record and to edit the metadata
+      start: create the *record* which will be placed on final-video
+             and transfered to basique.linux-gull.ch when stoppped
+      status: tell if the video is recording and give the size of the video
+      stop: stop the recording
+      playlast: play the last video recorded
+      show [grabber|cam]: commodity to see webcam or grabber
 eousage
 }
 
@@ -75,12 +96,12 @@ function start_test
 {
     if lsmod | grep -qP  "^rgb133\b"
     then
-        echo -e "\033[0;34m(INFO : module rgb133.ko loaded)\033[0m"
-        echo -e "\033[0;34m(INFO : if the recording does not start, check the 1024x768 resolution\033[0m"
-        echo -e "\033[0;34m(Hint : use /usr/local/Vision/Vision)\033[0m"
-        echo -e "\033[0;34m(INFO : if the start still does not start check these:\033[0m"
-        echo -e "\033[0;34m(Hint :   webcam is not already running (cheese, vlc, ...)\033[0m"
-        echo -e "\033[0;34m(Hint :   graber is not already running (Vision, vlc, ...)\033[0m"
+        echo -e "\033[0;34mINFO : module rgb133.ko loaded\033[0m"
+        echo -e "\033[0;34mINFO : if the recording does not start, check the 1024x768 resolution)\033[0m"
+        echo -e "\033[0;34mHint : use /usr/local/Vision/Vision)\033[0m"
+        echo -e "\033[0;34mINFO : if the start still does not start check these:\033[0m"
+        echo -e "\033[0;34mHint :   webcam is not already running (cheese, vlc, ...)\033[0m"
+        echo -e "\033[0;34mHint :   graber is not already running (Vision, vlc, ...)\033[0m"
     else
         echo -e "\033[0;31mERROR : You must reboot and use the oldest kernel\033[0m"
         echo -e '\033[0;31mERROR : to have the rgb133.ko module in it. (lsmod | grep -P "^rgb133\\b")\033[0m'
@@ -89,10 +110,22 @@ function start_test
     fi
 }
 
-start() {
-    start_test
+is_already_running(){
     [ "$PID" ] && [ -z "${PID//[0-9]}" ] && [ -d /proc/$PID ] && \
 	die "GST est déjà en cours d'enregistrement."
+}
+start() {
+    is_already_running
+    #
+    start_test
+    if [[ $ACTION = "checkstart" ]]
+    then
+        ask4meta $COURSENAME
+    elif [[ $ACTION = "start" ]]
+    then
+        print_meta
+    fi
+    #
     PID=
     while [ -z "$PID" ] && [ $((MAXTRY--)) -gt 0 ];do
     echo "" | tee -a $DIR/gst.log >>$DIR/gst.err
@@ -225,28 +258,156 @@ gst-launch-0.10 -e videomixer2 name=mix \
       ! mp4mux name=mux \
    mux. ! filesink location="$DST"
 }
+declare -A META
+metafields=()
+editMeta=false
+getField() {
+    HISTFILE=.meta_${COURSENAME}_${metafields[$1]}.history
+    HISTFILE=${HISTFILE,,}
+    HISTFILE=$DIR/${HISTFILE// }
+    [ -f "${HISTFILE}" ] || touch "${HISTFILE}"
+    history -c
+    history -r $HISTFILE
+    read -e -p "Enter ${metafields[$1]} > " $2
+    echo "${!2}" >> $HISTFILE
+}
+readMetaFile() {
+    local _content _field _line
+    if [ -f "$1" ] ;then
+	metafields=()
+	while read _line;do
+	    _content=${_line#*:}
+	    _field=${_line%:$_content}
+	    [ "$_field" ] && [ "$_field" != "$_line" ] &&
+	    metafields+=($_field) && META[$_field]=${_content## }
+	done < "$1"
+    fi
+}
+getMeta() {
+    local _field _i
+    [ -f "$DIR/meta/_defaults_" ] && readMetaFile "$DIR/meta/_defaults_"
+    [ -f "$DIR/meta/${COURSENAME}" ] &&
+	readMetaFile "$DIR/meta/${COURSENAME}"
+    [ -f "$1" ] && readMetaFile "$1"
+}
+ask4meta() {
+    while :;do
+	printf "\e[1mMeta datas:\e[0m\n"
+	for ((_i=0;_i<${#metafields[@]};_i++)) ;do
+	    _field=${metafields[_i]}
+	    printf "    %d) %-16s : %s\n" $_i  ${_field} ${META[$_field]}
+	done
+	read -n1 -p 'Enter field num to edit or [Return] when done: ' _i
+	case $_i in
+	    ''    ) break ;;
+	    [0-9] ) echo
+	        getField $_i _field
+	        META[${metafields[$_i]}]="${_field}" ;;
+	    * ) echo "Error, please enter un number or nothing!" ;;
+	esac
+    done
+    while :;do
+	read -n1 -p "Save meta datas as default for ${COURSENAME} (Y/n)? " _i
+	case ${_i,} in
+	    y|'' ) [ "$_i" = "y" ] && echo
+		for ((_i=0;_i<${#metafields[@]};_i++)) ;do
+		    _field=${metafields[_i]}
+		    echo ${_field}: ${META[$_field]}
+		done > "$DIR/meta/${COURSENAME}"
+		break ;;
+	    n ) echo ; break ;;
+	    * ) echo -e "\nPlease answer Y or N!" ;;
+	esac
+    done
+}
+get_last_coursename(){
+    ls -rt1 $DIR/meta/ | grep -Pv '^_defaults_$' | tail -1
+}
+print_meta(){
+    metapath=$(ls -rt1 $DIR/meta/ | tail -1)
+    echo -e "\033[0;34mINFO : metadata  for ${metapath^^} is\033[0m"
+    while read line
+    do
+        echo -e "\033[0;34m  ${line} \033[0m"
+    done < ${DIR}/meta/${metapath}
+}
+
+FNSEP="_-_" FNFLD=(date name version pid)
+
+while [ "${1:0:1}" = "-" ] ;do
+    case ${1:1} in
+	d )
+	    DEBUG=true
+	    set -v
+	    ;;
+	s )
+	    FNSEP=_
+	    FNFLD=(d n v p)
+	    ;;
+	h ) 
+	    usage
+	    exit 0
+	    ;;
+	m )
+	    editMeta=true
+	    ;;
+	* )
+	    die "invalid option -- '$1'" 
+	    ;;
+	esac
+    shift
+done
+
+COURSENAME=$(get_last_coursename)
+
+
+printf -v DST "%s/%s:%(%y.%m.%d_%H:%M:%S)T" "$DIR" $FNFLD -1
+DST+=(${FNFLD[1]}:${COURSENAME})
+DST+=(${FNFLD[2]}:$version)
+printf -v FPID %04x $$
+DST+=(${FNFLD[3]}:$FPID)
+DST=${DST[*]}
+DST=${DST// /$FNSEP}
+FMETA=$DST.meta
+DST+=.mp4
 
 COMMAND=${1:-status}
 
+getMeta
+
 case "${COMMAND,,}" in
-    status )
-        ACTION="status"
-        status ;;
     checkstart )
         ACTION="checkstart"
+        if [[ -n $2 ]]
+        then
+            COURSENAME=$2
+        fi
+        if [[ -z $COURSENAME ]]
+        then
+            usage
+            die "you must specify a checkstart <coursename>"
+        fi
         start
         ;;
     start )
         ACTION="start"
-        if test -z $2;
+        if [[ -z $COURSENAME ]]
         then
             usage
-            die Syntax error.
+            die "you must specify do a checkstart <coursename> before"
         fi
-        start $2
+        start
         ;;
+    status )
+        ACTION="status"
+        status ;;
     stop )
         ACTION="stop"
+        if [[ -z $COURSENAME ]]
+        then
+            usage
+            die "you must specify do a checkstart <coursename> before"
+        fi
         stop
         ;;
     playlast )
@@ -264,6 +425,7 @@ case "${COMMAND,,}" in
         fi
         
         ;;
-    -h|help ) usage ; exit 0 ;;
     * )     usage; die Syntax error. ;;
 esac
+
+$DEBUG&&set
