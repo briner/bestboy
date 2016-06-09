@@ -25,6 +25,8 @@ WEBCAM_DEVICE=$(v4l2-ctl --list-devices \
                 | tail -1 \
                 | sed -r "s|\s*||")
 
+RESOLUTION=$(v4l2-ctl --all -d ${GRABBER_DEVICE} | grep -w "Width/Height" | sed "s|.*: ||")
+
 if [[ -z ${WEBCAM_DEVICE} ]]; then
     echo "No webcam device found."
     echo "Exit !"
@@ -37,20 +39,26 @@ if [[ -z ${GRABBER_DEVICE} ]]; then
     exit 1
 fi
 
+if [[ ${RESOLUTION} != "1024/768" ]]; then
+  echo "Resolution must be 1024x768 not ${RESOLUTION}"
+  echo "Exit !"
+  exit 1
+fi
+
 
 die() { echo "$(basename $0) Error: $@" >&2;$DEBUG && set >&2;exit 1; }
 usage() { cat <<-eousage
-    Usage: $0 
+    Usage: $0
       [-s] [-d] [-h] [ checkstart [<coursename>] |
                        start                    |
                        status                   |
                        stop                     |
                        playlast                 |
-                       show      [grabber|cam]  ] 
+                       show      [grabber|cam]  ]
       -h   Show this help
       -d   Debug (show running command and dump environ when exit)
       -s   Small name (shorten auto file name)
-      
+
       checkstart: allow to test the record and to edit the metadata
       start: create the *record* which will be placed on final-video
              and transfered to basique.linux-gull.ch when stoppped
@@ -74,7 +82,7 @@ function find_video
     | filter_list_video
 }
 function get_filename_video_recording
-{   
+{
     PID="$1"
     for fd in /proc/$PID/fd/*
     do
@@ -154,7 +162,7 @@ stop() {
     while [ -d /proc/$PID ] ;do
 	kill -INT $PID
 	sleep $DOWNDELAY
-	done 
+	done
     [ -f $PFILE ] && rm $PFILE
     #
     if echo "$FILEPATH" | grep -q "_-_name:CHECK_-_"
@@ -176,7 +184,7 @@ stop() {
 status() {
     if [ "$PID" ] && [ -z "${PID//[0-9]}" ] && [ -d /proc/$PID ] ;then
         # ps h $PID
-        read STARTED < <(LANG=C ps ho lstart $PID|date -f - +%s)        
+        read STARTED < <(LANG=C ps ho lstart $PID|date -f - +%s)
         filepath=$(get_filename_video_recording $PID)
         if test -n "${filepath}" ; then
             SIZE=$(stat -c %s $filepath)
@@ -344,7 +352,7 @@ while [ "${1:0:1}" = "-" ] ;do
 	    FNSEP=_
 	    FNFLD=(d n v p)
 	    ;;
-	h ) 
+	h )
 	    usage
 	    exit 0
 	    ;;
@@ -352,7 +360,7 @@ while [ "${1:0:1}" = "-" ] ;do
 	    editMeta=true
 	    ;;
 	* )
-	    die "invalid option -- '$1'" 
+	    die "invalid option -- '$1'"
 	    ;;
 	esac
     shift
@@ -423,7 +431,7 @@ case "${COMMAND,,}" in
             usage
             die Syntax error.
         fi
-        
+
         ;;
     * )     usage; die Syntax error. ;;
 esac
