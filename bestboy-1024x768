@@ -102,6 +102,7 @@ txtsize() {
 }
 function start_test
 {
+    echo -e "\033[0;34mINFO :    succes killing other\033[0m"
     if lsmod | grep -qP  "^rgb133\b"
     then
         echo -e "\033[0;34mINFO : module rgb133.ko loaded\033[0m"
@@ -123,6 +124,9 @@ is_already_running(){
 	die "GST est déjà en cours d'enregistrement."
 }
 start() {
+    echo -e "\033[0;34mINFO : test if previous version are still running\033[0m"
+    echo -e "\033[0;34mINFO :    if you do not get the line 'success':\033[0m"
+    echo -e "\033[0;34mINFO :    kill it manually:\033[0m"
     is_already_running
     #
     start_test
